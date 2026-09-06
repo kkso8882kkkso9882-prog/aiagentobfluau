@@ -1,14 +1,11 @@
-# aiagentobfluau/evaluator.py
-
 class Evaluator:
-    """
-    ตรวจสอบผลลัพธ์ของ Obfuscator และ Deobfuscator
-    โดยไม่ execute Lua
-    """
 
-    OBF_PREFIX = "-- AIOBF_LUA_V1\n"
+    OBF_PREFIXES = (
+        "-- AIOBF_B64_V1\n",
+        "-- AIOBF_HEX_V1\n",
+    )
 
-    def check_obfuscation(self, original: str, obfuscated: str) -> bool:
+    def check_obfuscation(self, original, obfuscated):
         if not isinstance(original, str):
             return False
 
@@ -18,22 +15,20 @@ class Evaluator:
         if not original.strip():
             return False
 
-        if not obfuscated.startswith(self.OBF_PREFIX):
+        if not obfuscated.startswith(self.OBF_PREFIXES):
             return False
 
-        payload = obfuscated[len(self.OBF_PREFIX):]
+        payload = obfuscated.split("\n", 1)[1]
 
-        # ต้องมีข้อมูลหลัง prefix
         if not payload.strip():
             return False
 
-        # ผลลัพธ์ต้องแตกต่างจาก source เดิม
         if obfuscated == original:
             return False
 
         return True
 
-    def check_recovery(self, original: str, recovered: str) -> bool:
+    def check_recovery(self, original, recovered):
         if not isinstance(original, str):
             return False
 
@@ -42,12 +37,7 @@ class Evaluator:
 
         return original.strip() == recovered.strip()
 
-    def evaluate(
-        self,
-        original: str,
-        obfuscated: str,
-        recovered: str
-    ) -> dict:
+    def evaluate(self, original, obfuscated, recovered):
         obfuscator_success = self.check_obfuscation(
             original,
             obfuscated
@@ -61,8 +51,6 @@ class Evaluator:
         return {
             "obfuscator_success": obfuscator_success,
             "deobfuscator_success": deobfuscator_success,
-            "overall_success": (
-                obfuscator_success
-                and deobfuscator_success
-            )
+            "overall_success":
+                obfuscator_success and deobfuscator_success
         }
