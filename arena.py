@@ -1,4 +1,4 @@
-# aiagentobfluau/arena.py
+import binascii
 
 from agents import (
     ObfuscatorAgent,
@@ -12,29 +12,39 @@ from scoring import ScoringSystem
 class Arena:
 
     def __init__(self):
-        self.obfuscator = ObfuscatorAgent()
-        self.deobfuscator = DeobfuscatorAgent()
+
+        self.obfuscator = (
+            ObfuscatorAgent()
+        )
+
+        self.deobfuscator = (
+            DeobfuscatorAgent()
+        )
 
         self.evaluator = Evaluator()
         self.scoring = ScoringSystem()
 
         self.round = 0
 
-    def run(self, source: str) -> dict:
+    def run(self, source):
 
         if not isinstance(source, str):
-            raise TypeError("source must be a string")
+            raise TypeError(
+                "source must be a string"
+            )
 
         if not source.strip():
-            raise ValueError("source cannot be empty")
+            raise ValueError(
+                "source cannot be empty"
+            )
 
         self.round += 1
 
-        # =========================
-        # 1. Obfuscator
-        # =========================
-
-        obfuscated = self.obfuscator.obfuscate(source)
+        obfuscated = (
+            self.obfuscator.obfuscate(
+                source
+            )
+        )
 
         obfuscator_success = (
             self.evaluator.check_obfuscation(
@@ -43,16 +53,15 @@ class Arena:
             )
         )
 
-        # =========================
-        # 2. Deobfuscator
-        # =========================
-
         recovered = None
         deobfuscator_success = False
 
         try:
-            recovered = self.deobfuscator.deobfuscate(
-                obfuscated
+
+            recovered = (
+                self.deobfuscator.deobfuscate(
+                    obfuscated
+                )
             )
 
             deobfuscator_success = (
@@ -62,12 +71,13 @@ class Arena:
                 )
             )
 
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+            binascii.Error
+        ):
             deobfuscator_success = False
-
-        # =========================
-        # 3. Feedback
-        # =========================
 
         self.obfuscator.learn(
             deobfuscator_success
@@ -77,31 +87,29 @@ class Arena:
             deobfuscator_success
         )
 
-        # =========================
-        # 4. Score
-        # =========================
-
         scores = self.scoring.calculate(
             obfuscator_success,
             deobfuscator_success
         )
 
-        # =========================
-        # 5. Result
-        # =========================
-
         return {
+
             "success": True,
 
-            "round": self.round,
+            "round":
+                self.round,
 
-            "source": source,
+            "source":
+                source,
 
-            "obfuscated": obfuscated,
+            "obfuscated":
+                obfuscated,
 
-            "recovered": recovered,
+            "recovered":
+                recovered,
 
             "evaluation": {
+
                 "obfuscator_success":
                     obfuscator_success,
 
@@ -109,20 +117,40 @@ class Arena:
                     deobfuscator_success
             },
 
-            "score": scores,
+            "score":
+                scores,
 
             "feedback": {
+
                 "obfuscator": {
-                    "strategy":
-                        self.obfuscator.last_strategy,
+
+                    "pipeline":
+                        (
+                            " -> ".join(
+                                self.obfuscator
+                                .last_pipeline
+                            )
+                            if self.obfuscator
+                            .last_pipeline
+                            else None
+                        ),
 
                     "deobfuscator_broke_it":
                         deobfuscator_success
                 },
 
                 "deobfuscator": {
-                    "strategy":
-                        self.deobfuscator.last_detected_strategy,
+
+                    "pipeline":
+                        (
+                            " -> ".join(
+                                self.deobfuscator
+                                .last_pipeline
+                            )
+                            if self.deobfuscator
+                            .last_pipeline
+                            else None
+                        ),
 
                     "recovery_success":
                         deobfuscator_success
@@ -130,10 +158,16 @@ class Arena:
             },
 
             "learning": {
+
                 "obfuscator_weights":
-                    dict(self.obfuscator.weights),
+                    dict(
+                        self.obfuscator.weights
+                    ),
 
                 "deobfuscator_weights":
-                    dict(self.deobfuscator.known_strategies)
+                    dict(
+                        self.deobfuscator
+                        .known_operations
+                    )
             }
         }
