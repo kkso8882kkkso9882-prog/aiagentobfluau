@@ -30,14 +30,31 @@ last_result = None
 
 
 # =========================================================
+# SHARED RUN + RECORD
+# =========================================================
+
+def run_and_record(source):
+    global round_count, total_score, last_result
+
+    with arena_lock:
+        result = arena.run(source)
+
+        round_count += 1
+
+        total_score["obfuscator"] += result["score"]["obfuscator"]
+        total_score["deobfuscator"] += result["score"]["deobfuscator"]
+
+        last_result = result
+
+        return result
+
+
+# =========================================================
 # ARENA LOOP
 # =========================================================
 
 def arena_loop():
     global arena_running
-    global round_count
-    global total_score
-    global last_result
 
     while arena_running:
 
@@ -46,21 +63,7 @@ def arena_loop():
         )
 
         try:
-            result = arena.run(source)
-
-            with arena_lock:
-
-                round_count += 1
-
-                total_score["obfuscator"] += (
-                    result["score"]["obfuscator"]
-                )
-
-                total_score["deobfuscator"] += (
-                    result["score"]["deobfuscator"]
-                )
-
-                last_result = result
+            run_and_record(source)
 
         except Exception:
             app.logger.exception(
@@ -282,16 +285,16 @@ def arena_dashboard():
                 latest_round,
 
             # =========================================
-            # CURRENT STRATEGY
+            # CURRENT STRATEGY / PLAN
             # =========================================
 
             "strategy": {
 
                 "obfuscator":
-                    arena.obfuscator.last_strategy,
+                    arena.obfuscator.last_plan,
 
                 "deobfuscator":
-                    arena.deobfuscator.last_detected_strategy
+                    arena.deobfuscator.last_plan
             },
 
             # =========================================
@@ -308,7 +311,7 @@ def arena_dashboard():
                 "deobfuscator":
                     dict(
                         arena.deobfuscator
-                        .known_strategies
+                        .known_operations
                     )
             },
 
@@ -377,7 +380,7 @@ def run_arena():
 
     try:
 
-        result = arena.run(source)
+        result = run_and_record(source)
 
         return jsonify(
             result

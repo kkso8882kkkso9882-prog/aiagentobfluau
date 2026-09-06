@@ -1,4 +1,5 @@
 import binascii
+import json
 
 from agents import (
     ObfuscatorAgent,
@@ -75,7 +76,8 @@ class Arena:
             TypeError,
             ValueError,
             UnicodeDecodeError,
-            binascii.Error
+            binascii.Error,
+            json.JSONDecodeError,
         ):
             deobfuscator_success = False
 
@@ -91,6 +93,17 @@ class Arena:
             obfuscator_success,
             deobfuscator_success
         )
+
+        def _plan_summary(plan):
+            if plan is None:
+                return None
+            chunks = plan.get("chunks") or []
+            ops = [c.get("op") for c in chunks]
+            return {
+                "version": plan.get("version"),
+                "num_chunks": len(chunks),
+                "operations": ops,
+            }
 
         return {
 
@@ -124,15 +137,9 @@ class Arena:
 
                 "obfuscator": {
 
-                    "pipeline":
-                        (
-                            " -> ".join(
-                                self.obfuscator
-                                .last_pipeline
-                            )
-                            if self.obfuscator
-                            .last_pipeline
-                            else None
+                    "plan":
+                        _plan_summary(
+                            self.obfuscator.last_plan
                         ),
 
                     "deobfuscator_broke_it":
@@ -141,15 +148,9 @@ class Arena:
 
                 "deobfuscator": {
 
-                    "pipeline":
-                        (
-                            " -> ".join(
-                                self.deobfuscator
-                                .last_pipeline
-                            )
-                            if self.deobfuscator
-                            .last_pipeline
-                            else None
+                    "plan":
+                        _plan_summary(
+                            self.deobfuscator.last_plan
                         ),
 
                     "recovery_success":

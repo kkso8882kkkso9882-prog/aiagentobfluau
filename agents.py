@@ -1,50 +1,32 @@
 import base64
+import json
 import random
 
 
 class ObfuscatorAgent:
 
+    OPERATIONS = ("base64", "hex", "reverse")
+
     def __init__(self):
-        self.strategies = [
-            ("base64",),
-            ("hex",),
-            ("reverse",),
-            ("base64", "hex"),
-            ("hex", "base64"),
-            ("reverse", "base64"),
-            ("reverse", "hex"),
-            ("base64", "reverse"),
-            ("hex", "reverse"),
-        ]
-
         self.weights = {
-            self._name(s): 1.0
-            for s in self.strategies
+            op: 1.0 for op in self.OPERATIONS
         }
-
-        self.last_pipeline = None
+        self.last_plan = None
         self.memory = []
 
-    def _name(self, pipeline):
-        return " -> ".join(pipeline)
-
-    def _choose_pipeline(self):
+    def _choose_operation(self):
         total = sum(self.weights.values())
         value = random.uniform(0, total)
-
         current = 0.0
 
-        for pipeline in self.strategies:
-            name = self._name(pipeline)
-            current += self.weights[name]
-
+        for op in self.OPERATIONS:
+            current += self.weights[op]
             if value <= current:
-                return pipeline
+                return op
 
-        return self.strategies[-1]
+        return self.OPERATIONS[-1]
 
     def _apply(self, data, operation):
-
         if operation == "base64":
             return base64.b64encode(
                 data.encode("utf-8")
@@ -61,54 +43,69 @@ class ObfuscatorAgent:
         )
 
     def obfuscate(self, source):
-
         if not isinstance(source, str):
-            raise TypeError(
-                "source must be a string"
-            )
+            raise TypeError("source must be a string")
 
-        pipeline = self._choose_pipeline()
-        self.last_pipeline = pipeline
+        chunks = []
+        i = 0
+        pos = 0
+        n = len(source)
 
-        data = source
+        while pos < n:
+            length = random.randint(1, 12)
+            if pos + length > n:
+                length = n - pos
 
-        for operation in pipeline:
-            data = self._apply(
-                data,
-                operation
-            )
+            piece = source[pos:pos + length]
+            op = self._choose_operation()
+            encoded = self._apply(piece, op)
 
-        return (
-            "-- AIOBF_PIPE_V1\n"
-            f"-- {self._name(pipeline)}\n"
-            f"{data}"
+            chunks.append({
+                "i": i,
+                "len": length,
+                "op": op,
+                "data": encoded,
+            })
+
+            i += 1
+            pos += length
+
+        self.last_plan = {
+            "version": 1,
+            "chunks": chunks,
+        }
+
+        payload = json.dumps(
+            self.last_plan,
+            separators=(",", ":"),
+            ensure_ascii=True,
         )
+
+        return f"-- AIOBF_CHUNK_V1\n{payload}"
 
     def learn(self, deobfuscator_success):
-
-        if self.last_pipeline is None:
+        if self.last_plan is None:
             return
 
-        name = self._name(
-            self.last_pipeline
-        )
+        ops_used = [
+            c["op"] for c in self.last_plan["chunks"]
+        ]
 
-        if deobfuscator_success:
-            self.weights[name] *= 0.75
-        else:
-            self.weights[name] *= 1.30
+        for op in ops_used:
+            if deobfuscator_success:
+                self.weights[op] *= 0.75
+            else:
+                self.weights[op] *= 1.30
 
-        self.weights[name] = max(
-            0.05,
-            min(self.weights[name], 20.0)
-        )
+            self.weights[op] = max(
+                0.05,
+                min(self.weights[op], 20.0),
+            )
 
         self.memory.append({
-            "pipeline": name,
-            "deobfuscator_success":
-                deobfuscator_success,
-            "weight":
-                self.weights[name]
+            "ops": ops_used,
+            "deobfuscator_success": deobfuscator_success,
+            "weights": dict(self.weights),
         })
 
         if len(self.memory) > 500:
@@ -117,129 +114,129 @@ class ObfuscatorAgent:
 
 class DeobfuscatorAgent:
 
+    OPERATIONS = ("base64", "hex", "reverse")
+
     def __init__(self):
-
         self.known_operations = {
-            "base64": 1.0,
-            "hex": 1.0,
-            "reverse": 1.0,
+            op: 1.0 for op in self.OPERATIONS
         }
-
-        self.last_pipeline = None
+        self.last_plan = None
         self.memory = []
 
-    def _decode_operation(
-        self,
-        data,
-        operation
-    ):
-
+    def _decode_operation(self, data, operation):
         if operation == "reverse":
             return data[::-1]
 
         if operation == "base64":
-
-            decoded = base64.b64decode(
-                data,
-                validate=True
-            )
-
-            return decoded.decode(
-                "utf-8"
-            )
+            decoded = base64.b64decode(data, validate=True)
+            return decoded.decode("utf-8")
 
         if operation == "hex":
-
             decoded = bytes.fromhex(data)
-
-            return decoded.decode(
-                "utf-8"
-            )
+            return decoded.decode("utf-8")
 
         raise ValueError(
             f"Unknown operation: {operation}"
         )
 
     def deobfuscate(self, obfuscated):
-
         if not isinstance(obfuscated, str):
             raise TypeError(
                 "obfuscated must be a string"
             )
 
-        prefix = "-- AIOBF_PIPE_V1\n"
+        prefix = "-- AIOBF_CHUNK_V1\n"
 
         if not obfuscated.startswith(prefix):
+            raise ValueError("Unknown AIOBF format")
+
+        payload = obfuscated[len(prefix):]
+
+        try:
+            plan = json.loads(payload)
+        except json.JSONDecodeError as exc:
             raise ValueError(
-                "Unknown AIOBF format"
-            )
+                "Invalid chunk payload"
+            ) from exc
 
-        lines = obfuscated.split("\n", 2)
+        if not isinstance(plan, dict):
+            raise ValueError("Invalid plan type")
 
-        if len(lines) != 3:
-            raise ValueError(
-                "Invalid pipeline payload"
-            )
+        if plan.get("version") != 1:
+            raise ValueError("Unsupported version")
 
-        pipeline_line = lines[1]
+        chunks = plan.get("chunks")
+        if not isinstance(chunks, list) or not chunks:
+            raise ValueError("Invalid chunks")
 
-        if not pipeline_line.startswith("-- "):
-            raise ValueError(
-                "Invalid pipeline"
-            )
+        # Validate indices: must be 0..n-1 unique
+        n = len(chunks)
+        indices = []
+        for c in chunks:
+            if not isinstance(c, dict):
+                raise ValueError("Invalid chunk")
+            if "i" not in c or "len" not in c or "op" not in c or "data" not in c:
+                raise ValueError("Missing chunk fields")
+            if not isinstance(c["i"], int):
+                raise ValueError("Invalid chunk index")
+            if not isinstance(c["len"], int) or c["len"] < 1:
+                raise ValueError("Invalid original length")
+            if c["op"] not in self.OPERATIONS:
+                raise ValueError("Invalid operation")
+            if not isinstance(c["data"], str):
+                raise ValueError("Invalid encoded data")
+            indices.append(c["i"])
 
-        pipeline = tuple(
-            part.strip()
-            for part in pipeline_line[3:].split(" -> ")
-        )
+        if sorted(indices) != list(range(n)):
+            raise ValueError("Invalid chunk index sequence")
 
-        data = lines[2]
+        # Sort by index and decode
+        ordered = sorted(chunks, key=lambda c: c["i"])
+        parts = []
 
-        self.last_pipeline = pipeline
+        for c in ordered:
+            try:
+                piece = self._decode_operation(
+                    c["data"],
+                    c["op"],
+                )
+            except Exception as exc:
+                raise ValueError(
+                    "Failed to decode chunk"
+                ) from exc
 
-        for operation in reversed(pipeline):
+            if len(piece) != c["len"]:
+                raise ValueError(
+                    "Chunk length mismatch after decode"
+                )
 
-            data = self._decode_operation(
-                data,
-                operation
-            )
+            parts.append(piece)
 
-        return data
+        self.last_plan = plan
+        return "".join(parts)
 
     def learn(self, success):
-
-        if self.last_pipeline is None:
+        if self.last_plan is None:
             return
 
-        for operation in self.last_pipeline:
+        ops_used = [
+            c["op"] for c in self.last_plan["chunks"]
+        ]
 
+        for op in ops_used:
             if success:
-                self.known_operations[
-                    operation
-                ] *= 1.15
+                self.known_operations[op] *= 1.15
             else:
-                self.known_operations[
-                    operation
-                ] *= 0.85
+                self.known_operations[op] *= 0.85
 
-            self.known_operations[
-                operation
-            ] = max(
+            self.known_operations[op] = max(
                 0.05,
-                min(
-                    self.known_operations[
-                        operation
-                    ],
-                    20.0
-                )
+                min(self.known_operations[op], 20.0),
             )
 
         self.memory.append({
-            "pipeline":
-                " -> ".join(
-                    self.last_pipeline
-                ),
-            "success": success
+            "ops": ops_used,
+            "success": success,
         })
 
         if len(self.memory) > 500:
