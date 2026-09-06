@@ -1,23 +1,19 @@
 # aiagentobfluau/app.py
 
 from flask import Flask, jsonify, request
-
 from arena import Arena
-
 import threading
 import time
 
-
 app = Flask(__name__)
+
+# =========================================================
+# ARENA
+# =========================================================
 
 arena = Arena()
 
 MAX_SOURCE_LENGTH = 10_000
-
-
-# =========================
-# Arena State
-# =========================
 
 arena_running = False
 arena_thread = None
@@ -30,16 +26,14 @@ total_score = {
 }
 
 round_count = 0
-
 last_result = None
 
 
-# =========================
-# Arena Loop
-# =========================
+# =========================================================
+# ARENA LOOP
+# =========================================================
 
 def arena_loop():
-
     global arena_running
     global round_count
     global total_score
@@ -52,7 +46,6 @@ def arena_loop():
         )
 
         try:
-
             result = arena.run(source)
 
             with arena_lock:
@@ -70,7 +63,6 @@ def arena_loop():
                 last_result = result
 
         except Exception:
-
             app.logger.exception(
                 "Arena round failed"
             )
@@ -78,9 +70,9 @@ def arena_loop():
         time.sleep(1)
 
 
-# =========================
-# Health
-# =========================
+# =========================================================
+# HEALTH
+# =========================================================
 
 @app.get("/health")
 def health():
@@ -91,9 +83,9 @@ def health():
     })
 
 
-# =========================
-# Start
-# =========================
+# =========================================================
+# START ARENA
+# =========================================================
 
 @app.post("/arena/start")
 def start_arena():
@@ -125,9 +117,9 @@ def start_arena():
     })
 
 
-# =========================
-# Stop
-# =========================
+# =========================================================
+# STOP ARENA
+# =========================================================
 
 @app.post("/arena/stop")
 def stop_arena():
@@ -144,9 +136,9 @@ def stop_arena():
     })
 
 
-# =========================
-# Score
-# =========================
+# =========================================================
+# SCORE
+# =========================================================
 
 @app.get("/score")
 def get_score():
@@ -155,12 +147,8 @@ def get_score():
 
         return jsonify({
             "success": True,
-
-            "running":
-                arena_running,
-
-            "rounds":
-                round_count,
+            "running": arena_running,
+            "rounds": round_count,
 
             "score": {
                 "obfuscator":
@@ -172,9 +160,9 @@ def get_score():
         })
 
 
-# =========================
-# Last Result
-# =========================
+# =========================================================
+# LAST ROUND
+# =========================================================
 
 @app.get("/arena/last")
 def get_last_result():
@@ -194,9 +182,154 @@ def get_last_result():
         })
 
 
-# =========================
-# Manual Arena Run
-# =========================
+# =========================================================
+# LIVE DASHBOARD
+# =========================================================
+
+@app.get("/arena/dashboard")
+def arena_dashboard():
+
+    with arena_lock:
+
+        # ---------------------------------------------
+        # Build leaderboard dynamically
+        # ---------------------------------------------
+
+        scores = [
+            {
+                "agent": "Obfuscator",
+                "score":
+                    total_score["obfuscator"]
+            },
+            {
+                "agent": "Deobfuscator",
+                "score":
+                    total_score["deobfuscator"]
+            }
+        ]
+
+        scores.sort(
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        leaderboard = []
+
+        for rank, item in enumerate(
+            scores,
+            start=1
+        ):
+
+            leaderboard.append({
+                "rank": rank,
+                "agent": item["agent"],
+                "score": item["score"]
+            })
+
+        # ---------------------------------------------
+        # Latest round
+        # ---------------------------------------------
+
+        latest_round = None
+
+        if last_result is not None:
+
+            latest_round = {
+                "round":
+                    last_result["round"],
+
+                "score":
+                    last_result["score"],
+
+                "evaluation":
+                    last_result["evaluation"],
+
+                "feedback":
+                    last_result["feedback"]
+            }
+
+        # ---------------------------------------------
+        # Dashboard
+        # ---------------------------------------------
+
+        return jsonify({
+
+            "success": True,
+
+            # =========================================
+            # LEADERBOARD
+            # =========================================
+
+            "leaderboard": leaderboard,
+
+            # =========================================
+            # ARENA STATUS
+            # =========================================
+
+            "arena": {
+                "running":
+                    arena_running,
+
+                "rounds":
+                    round_count
+            },
+
+            # =========================================
+            # LATEST ROUND
+            # =========================================
+
+            "latest_round":
+                latest_round,
+
+            # =========================================
+            # CURRENT STRATEGY
+            # =========================================
+
+            "strategy": {
+
+                "obfuscator":
+                    arena.obfuscator.last_strategy,
+
+                "deobfuscator":
+                    arena.deobfuscator.last_detected_strategy
+            },
+
+            # =========================================
+            # LEARNING WEIGHTS
+            # =========================================
+
+            "weights": {
+
+                "obfuscator":
+                    dict(
+                        arena.obfuscator.weights
+                    ),
+
+                "deobfuscator":
+                    dict(
+                        arena.deobfuscator
+                        .known_strategies
+                    )
+            },
+
+            # =========================================
+            # TOTAL SCORE
+            # =========================================
+
+            "total_score": {
+
+                "obfuscator":
+                    total_score["obfuscator"],
+
+                "deobfuscator":
+                    total_score["deobfuscator"]
+            }
+        })
+
+
+# =========================================================
+# MANUAL ARENA ROUND
+# =========================================================
 
 @app.post("/arena/run")
 def run_arena():
@@ -263,9 +396,9 @@ def run_arena():
         }), 500
 
 
-# =========================
+# =========================================================
 # 404
-# =========================
+# =========================================================
 
 @app.errorhandler(404)
 def not_found(_error):
@@ -277,9 +410,9 @@ def not_found(_error):
     }), 404
 
 
-# =========================
-# Local
-# =========================
+# =========================================================
+# LOCAL DEVELOPMENT
+# =========================================================
 
 if __name__ == "__main__":
 
