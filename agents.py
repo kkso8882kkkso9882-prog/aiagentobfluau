@@ -1,185 +1,246 @@
-# aiagentobfluau/agents.py
-
 import base64
-import binascii
 import random
 
 
 class ObfuscatorAgent:
-    """
-    Adaptive Obfuscator Agent
-
-    มีหลาย strategy และปรับ strategy จากผลการแข่งขัน
-    """
 
     def __init__(self):
         self.strategies = [
-            "base64",
-            "hex",
+            ("base64",),
+            ("hex",),
+            ("reverse",),
+            ("base64", "hex"),
+            ("hex", "base64"),
+            ("reverse", "base64"),
+            ("reverse", "hex"),
+            ("base64", "reverse"),
+            ("hex", "reverse"),
         ]
 
         self.weights = {
-            "base64": 1.0,
-            "hex": 1.0,
+            self._name(s): 1.0
+            for s in self.strategies
         }
 
-        self.last_strategy = None
+        self.last_pipeline = None
         self.memory = []
 
-    def _choose_strategy(self):
-        total = sum(self.weights.values())
+    def _name(self, pipeline):
+        return " -> ".join(pipeline)
 
+    def _choose_pipeline(self):
+        total = sum(self.weights.values())
         value = random.uniform(0, total)
 
-        current = 0
+        current = 0.0
 
-        for strategy in self.strategies:
-            current += self.weights[strategy]
+        for pipeline in self.strategies:
+            name = self._name(pipeline)
+            current += self.weights[name]
 
             if value <= current:
-                return strategy
+                return pipeline
 
         return self.strategies[-1]
 
-    def obfuscate(self, source: str) -> str:
-        if not isinstance(source, str):
-            raise TypeError("source must be a string")
+    def _apply(self, data, operation):
 
-        strategy = self._choose_strategy()
-        self.last_strategy = strategy
-
-        if strategy == "base64":
-            encoded = base64.b64encode(
-                source.encode("utf-8")
+        if operation == "base64":
+            return base64.b64encode(
+                data.encode("utf-8")
             ).decode("ascii")
 
-            return "-- AIOBF_B64_V1\n" + encoded
+        if operation == "hex":
+            return data.encode("utf-8").hex()
 
-        if strategy == "hex":
-            encoded = source.encode("utf-8").hex()
+        if operation == "reverse":
+            return data[::-1]
 
-            return "-- AIOBF_HEX_V1\n" + encoded
+        raise ValueError(
+            f"Unknown operation: {operation}"
+        )
 
-        raise ValueError("Unknown obfuscation strategy")
+    def obfuscate(self, source):
 
-    def learn(self, deobfuscator_success: bool):
-        """
-        ถ้า Deobfuscator แกะได้:
-            strategy นี้เสียเปรียบ → ลด weight
+        if not isinstance(source, str):
+            raise TypeError(
+                "source must be a string"
+            )
 
-        ถ้า Deobfuscator แกะไม่ได้:
-            strategy นี้แข็งแรงขึ้น → เพิ่ม weight
-        """
+        pipeline = self._choose_pipeline()
+        self.last_pipeline = pipeline
 
-        strategy = self.last_strategy
+        data = source
 
-        if strategy is None:
+        for operation in pipeline:
+            data = self._apply(
+                data,
+                operation
+            )
+
+        return (
+            "-- AIOBF_PIPE_V1\n"
+            f"-- {self._name(pipeline)}\n"
+            f"{data}"
+        )
+
+    def learn(self, deobfuscator_success):
+
+        if self.last_pipeline is None:
             return
 
-        if deobfuscator_success:
-            self.weights[strategy] *= 0.85
-        else:
-            self.weights[strategy] *= 1.15
+        name = self._name(
+            self.last_pipeline
+        )
 
-        self.weights[strategy] = max(
-            0.1,
-            min(self.weights[strategy], 10.0)
+        if deobfuscator_success:
+            self.weights[name] *= 0.75
+        else:
+            self.weights[name] *= 1.30
+
+        self.weights[name] = max(
+            0.05,
+            min(self.weights[name], 20.0)
         )
 
         self.memory.append({
-            "strategy": strategy,
-            "deobfuscator_success": deobfuscator_success
+            "pipeline": name,
+            "deobfuscator_success":
+                deobfuscator_success,
+            "weight":
+                self.weights[name]
         })
+
+        if len(self.memory) > 500:
+            self.memory.pop(0)
 
 
 class DeobfuscatorAgent:
-    """
-    Adaptive Deobfuscator Agent
-
-    พยายามเลือก strategy ที่ตัวเองมีข้อมูลมากที่สุด
-    """
 
     def __init__(self):
-        self.known_strategies = {
+
+        self.known_operations = {
             "base64": 1.0,
             "hex": 1.0,
+            "reverse": 1.0,
         }
 
+        self.last_pipeline = None
         self.memory = []
 
-        self.last_detected_strategy = None
+    def _decode_operation(
+        self,
+        data,
+        operation
+    ):
 
-    def deobfuscate(self, obfuscated: str) -> str:
-        if not isinstance(obfuscated, str):
-            raise TypeError("obfuscated must be a string")
+        if operation == "reverse":
+            return data[::-1]
 
-        self.last_detected_strategy = None
+        if operation == "base64":
 
-        if obfuscated.startswith("-- AIOBF_B64_V1\n"):
-            self.last_detected_strategy = "base64"
+            decoded = base64.b64decode(
+                data,
+                validate=True
+            )
 
-            encoded = obfuscated.split(
-                "\n",
-                1
-            )[1]
+            return decoded.decode(
+                "utf-8"
+            )
 
-            try:
-                decoded = base64.b64decode(
-                    encoded,
-                    validate=True
-                )
+        if operation == "hex":
 
-                return decoded.decode("utf-8")
+            decoded = bytes.fromhex(data)
 
-            except (
-                ValueError,
-                UnicodeDecodeError,
-                binascii.Error
-            ) as exc:
-                raise ValueError(
-                    "Invalid Base64 payload"
-                ) from exc
+            return decoded.decode(
+                "utf-8"
+            )
 
-        if obfuscated.startswith("-- AIOBF_HEX_V1\n"):
-            self.last_detected_strategy = "hex"
-
-            encoded = obfuscated.split(
-                "\n",
-                1
-            )[1]
-
-            try:
-                decoded = bytes.fromhex(encoded)
-
-                return decoded.decode("utf-8")
-
-            except (
-                ValueError,
-                UnicodeDecodeError
-            ) as exc:
-                raise ValueError(
-                    "Invalid HEX payload"
-                ) from exc
-
-        raise ValueError("Unknown AIOBF format")
-
-    def learn(self, success: bool):
-        strategy = self.last_detected_strategy
-
-        if strategy is None:
-            return
-
-        if success:
-            self.known_strategies[strategy] *= 1.15
-        else:
-            self.known_strategies[strategy] *= 0.85
-
-        self.known_strategies[strategy] = max(
-            0.1,
-            min(self.known_strategies[strategy], 10.0)
+        raise ValueError(
+            f"Unknown operation: {operation}"
         )
 
+    def deobfuscate(self, obfuscated):
+
+        if not isinstance(obfuscated, str):
+            raise TypeError(
+                "obfuscated must be a string"
+            )
+
+        prefix = "-- AIOBF_PIPE_V1\n"
+
+        if not obfuscated.startswith(prefix):
+            raise ValueError(
+                "Unknown AIOBF format"
+            )
+
+        lines = obfuscated.split("\n", 2)
+
+        if len(lines) != 3:
+            raise ValueError(
+                "Invalid pipeline payload"
+            )
+
+        pipeline_line = lines[1]
+
+        if not pipeline_line.startswith("-- "):
+            raise ValueError(
+                "Invalid pipeline"
+            )
+
+        pipeline = tuple(
+            part.strip()
+            for part in pipeline_line[3:].split(" -> ")
+        )
+
+        data = lines[2]
+
+        self.last_pipeline = pipeline
+
+        for operation in reversed(pipeline):
+
+            data = self._decode_operation(
+                data,
+                operation
+            )
+
+        return data
+
+    def learn(self, success):
+
+        if self.last_pipeline is None:
+            return
+
+        for operation in self.last_pipeline:
+
+            if success:
+                self.known_operations[
+                    operation
+                ] *= 1.15
+            else:
+                self.known_operations[
+                    operation
+                ] *= 0.85
+
+            self.known_operations[
+                operation
+            ] = max(
+                0.05,
+                min(
+                    self.known_operations[
+                        operation
+                    ],
+                    20.0
+                )
+            )
+
         self.memory.append({
-            "strategy": strategy,
+            "pipeline":
+                " -> ".join(
+                    self.last_pipeline
+                ),
             "success": success
         })
+
+        if len(self.memory) > 500:
+            self.memory.pop(0)
