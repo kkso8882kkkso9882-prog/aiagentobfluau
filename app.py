@@ -1,15 +1,53 @@
-# aiagentobfluau/app.py
-
 from flask import Flask, jsonify, request
-
 from arena import Arena
-
+import threading
+import time
 
 app = Flask(__name__)
 arena = Arena()
 
 MAX_SOURCE_LENGTH = 10_000
 
+# =========================
+# Arena State
+# =========================
+
+arena_running = False
+arena_thread = None
+
+total_score = {
+    "obfuscator": 0,
+    "deobfuscator": 0
+}
+
+round_count = 0
+
+
+def arena_loop():
+    global arena_running
+    global round_count
+    global total_score
+
+    while arena_running:
+        round_count += 1
+
+        source = f"print('AI Arena Round {round_count}')"
+
+        try:
+            result = arena.run(source)
+
+            total_score["obfuscator"] += result["score"]["obfuscator"]
+            total_score["deobfuscator"] += result["score"]["deobfuscator"]
+
+        except Exception:
+            app.logger.exception("Arena round failed")
+
+        time.sleep(1)
+
+
+# =========================
+# Health
+# =========================
 
 @app.get("/health")
 def health():
@@ -18,6 +56,10 @@ def health():
         "project": "aiagentobfluau"
     })
 
+
+# =========================
+# Run One Round
+# =========================
 
 @app.post("/arena/run")
 def run_arena():
@@ -56,12 +98,6 @@ def run_arena():
 
         return jsonify(result), 200
 
-    except (TypeError, ValueError) as exc:
-        return jsonify({
-            "success": False,
-            "error": str(exc)
-        }), 400
-
     except Exception:
         app.logger.exception("Arena execution failed")
 
@@ -70,6 +106,73 @@ def run_arena():
             "error": "Internal server error"
         }), 500
 
+
+# =========================
+# Start Arena
+# =========================
+
+@app.post("/arena/start")
+def start_arena():
+    global arena_running
+    global arena_thread
+
+    if arena_running:
+        return jsonify({
+            "success": True,
+            "status": "already_running"
+        })
+
+    arena_running = True
+
+    arena_thread = threading.Thread(
+        target=arena_loop,
+        daemon=True
+    )
+
+    arena_thread.start()
+
+    return jsonify({
+        "success": True,
+        "status": "running"
+    })
+
+
+# =========================
+# Stop Arena
+# =========================
+
+@app.post("/arena/stop")
+def stop_arena():
+    global arena_running
+
+    arena_running = False
+
+    return jsonify({
+        "success": True,
+        "status": "stopped"
+    })
+
+
+# =========================
+# Score
+# =========================
+
+@app.get("/score")
+def get_score():
+    return jsonify({
+        "success": True,
+        "running": arena_running,
+        "rounds": round_count,
+        "score": {
+            "obfuscator": total_score["obfuscator"],
+            "deobfuscator": total_score["deobfuscator"]
+        }
+    })
+
+
+# =========================
+# 404
+# =========================
 
 @app.errorhandler(404)
 def not_found(_error):
